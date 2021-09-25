@@ -1,0 +1,11 @@
+[package]
+name = "hiercmd"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+anyhow = "1.0.44"
+getopts = "0.2.21"
+
+[dev-dependencies]
+tokio = { version = "1.12.0", features = ["full"] }
