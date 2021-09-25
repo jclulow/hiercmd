@@ -15,12 +15,8 @@ pub struct CommandInfo {
 
 #[macro_export]
 macro_rules! cmd {
-    ($name:literal, $desc:literal, $func:ident) => {
-        hiercmd::CommandInfo {
-            name: $name.to_string(),
-            desc: $desc.to_string(),
-            func: |level| Box::pin($func(level)),
-        }
+    ($func:ident) => {
+        |level| Box::pin($func(level))
     };
 }
 
@@ -123,16 +119,49 @@ impl Level {
             .add_column(name, width, default);
     }
 
-    pub fn cmd(&mut self, ci: CommandInfo) -> Result<()> {
-        if self.commands.iter().any(|eci| eci.name == ci.name) {
-            bail!("duplicate command \"{}\"", ci.name);
+    pub fn cmd(&mut self, name: &str, desc: &str, func: Caller) -> Result<()> {
+        if self.commands.iter().any(|ci| ci.name == name) {
+            bail!("duplicate command \"{}\"", name);
         }
-        self.commands.push(ci);
+        self.commands.push(CommandInfo {
+            name: name.to_string(),
+            desc: desc.to_string(),
+            func,
+        });
         Ok(())
     }
 
-    pub fn opts(&mut self) -> &mut getopts::Options {
-        &mut self.options
+    pub fn optflagmulti(
+        &mut self,
+        short_name: &str,
+        long_name: &str,
+        desc: &str,
+    ) {
+        self.options.optflagmulti(short_name, long_name, desc);
+    }
+
+    pub fn optmulti(
+        &mut self,
+        short_name: &str,
+        long_name: &str,
+        desc: &str,
+        hint: &str,
+    ) {
+        self.options.optmulti(short_name, long_name, desc, hint);
+    }
+
+    pub fn optflag(&mut self, short_name: &str, long_name: &str, desc: &str) {
+        self.options.optflag(short_name, long_name, desc);
+    }
+
+    pub fn optopt(
+        &mut self,
+        short_name: &str,
+        long_name: &str,
+        desc: &str,
+        hint: &str,
+    ) {
+        self.options.optopt(short_name, long_name, desc, hint);
     }
 
     pub fn parse(&mut self) -> Result<Option<Arguments>> {
@@ -268,6 +297,10 @@ pub struct Arguments {
 impl Arguments {
     pub fn opts(&self) -> &getopts::Matches {
         &self.matches
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.matches.free
     }
 
     pub fn table(&mut self) -> &mut table::Table {

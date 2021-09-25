@@ -24,13 +24,16 @@ async fn do_thing_list(mut l: Level) -> Result<()> {
 }
 
 async fn do_thing(mut l: Level) -> Result<()> {
-    l.cmd(cmd!("list", "list things", do_thing_list))?;
+    l.cmd("list", "list things", cmd!(do_thing_list))?;
     sel!(l).run().await
 }
 
 async fn do_info(mut l: Level) -> Result<()> {
-    no_args!(l);
-    bail!("nyi");
+    let a = args!(l);
+    for (i, arg) in a.args().iter().enumerate() {
+        println!("[{:02}] {}", i, arg);
+    }
+    Ok(())
 }
 
 async fn do_nothing(mut l: Level) -> Result<()> {
@@ -41,11 +44,11 @@ async fn do_nothing(mut l: Level) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut l = hiercmd::Level::new("trial");
-    l.cmd(cmd!("info", "get information", do_info))?;
-    l.cmd(cmd!("thing", "manage things", do_thing))?;
-    l.cmd(cmd!("nothing", "do nothing", do_nothing))?;
+    l.cmd("info", "get information", cmd!(do_info))?;
+    l.cmd("thing", "manage things", cmd!(do_thing))?;
+    l.cmd("nothing", "do nothing", cmd!(do_nothing))?;
 
-    l.opts().optflag("x", "", "extend");
+    l.optflag("x", "", "extend");
 
     let s = sel!(l);
     if s.opts().opt_present("x") {
