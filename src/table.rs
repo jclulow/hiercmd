@@ -348,6 +348,20 @@ impl TableBuilder {
         names
     }
 
+    pub fn missing_column_names(&self) -> Vec<String> {
+        if let Some(output_filter) = &self.output_filter {
+            let mut names = output_filter
+                .iter()
+                .filter(|n| !self.outputs.iter().any(|o| &o.name == *n))
+                .cloned()
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        } else {
+            Vec::new()
+        }
+    }
+
     /**
      * Construct the final Table object, to which rows may be appended for
      * eventual display.

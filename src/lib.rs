@@ -28,7 +28,7 @@ macro_rules! cmd {
 macro_rules! sel {
     ($level:ident) => {
         match $level.select() {
-            Ok(None) => std::process::exit(0),
+            Ok(None) => return Ok(Default::default()),
             Ok(Some(sel)) => sel,
             Err(e) => {
                 eprintln!("ERROR: {}", e);
@@ -42,7 +42,7 @@ macro_rules! sel {
 macro_rules! args {
     ($level:ident) => {
         match $level.parse() {
-            Ok(None) => std::process::exit(0),
+            Ok(None) => return Ok(Default::default()),
             Ok(Some(mat)) => mat,
             Err(e) => {
                 eprintln!("ERROR: {}", e);
@@ -56,12 +56,13 @@ macro_rules! args {
 macro_rules! no_args {
     ($level:ident) => {
         match $level.parse() {
-            Ok(None) => (),
+            Ok(None) => return Ok(Default::default()),
             Ok(Some(args)) => {
                 if !args.opts().free.is_empty() {
                     eprintln!("ERROR: unexpected arguments");
                     std::process::exit(1);
                 }
+                args
             }
             Err(e) => {
                 eprintln!("ERROR: {}", e);
@@ -148,16 +149,29 @@ impl Level {
                     return Ok(None);
                 }
 
-                let table = self.table.as_mut().map(|table| {
+                let table = if let Some(table) = self.table.as_mut() {
                     table
                         .output_from_list(res.opt_str("o").as_deref())
                         .sort_from_list_asc(res.opt_str("s").as_deref())
                         .sort_from_list_desc(res.opt_str("S").as_deref())
                         .show_header(!res.opt_present("H"))
                         .tab_separated(res.opt_present("H"))
-                        .parseable(res.opt_present("p"))
-                        .build()
-                });
+                        .parseable(res.opt_present("p"));
+
+                    let mcn = table.missing_column_names();
+                    if !mcn.is_empty() {
+                        self.usage();
+                        eprintln!(
+                            "ERROR: invalid column names: {}",
+                            mcn.join(", ")
+                        );
+                        std::process::exit(1);
+                    }
+
+                    Some(table.build())
+                } else {
+                    None
+                };
 
                 Ok(Some(Arguments {
                     matches: res,
