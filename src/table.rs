@@ -366,7 +366,7 @@ impl TableBuilder {
      * Construct the final Table object, to which rows may be appended for
      * eventual display.
      */
-    pub fn build(&mut self) -> Table {
+    pub fn build(&self) -> Table {
         Table {
             header: self.header,
             tabsep: self.tabsep,

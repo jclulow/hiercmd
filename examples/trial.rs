@@ -6,8 +6,8 @@ async fn do_thing_list(mut l: Level<()>) -> Result<()> {
     l.add_column("name", 16, true);
     l.add_column("number", 6, false);
 
-    let mut a = args!(l);
-    let t = a.table();
+    let a = args!(l);
+    let mut t = a.table();
 
     let mut r = Row::default();
     r.add_str("name", "Thing One");
@@ -45,7 +45,7 @@ async fn do_nothing(mut l: Level<()>) -> Result<()> {
 async fn main() -> Result<()> {
     let mut l = hiercmd::Level::new("trial", ());
     l.cmd("info", "get information", cmd!(do_info))?;
-    l.cmd("thing", "manage things", cmd!(do_thing))?;
+    l.cmda("thing", "th", "manage things", cmd!(do_thing))?;
     l.cmd("nothing", "do nothing", cmd!(do_nothing))?;
 
     l.optflag("x", "", "extend");

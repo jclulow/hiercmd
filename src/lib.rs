@@ -24,8 +24,10 @@ pub type Caller<C> =
 #[derive(Clone)]
 struct CommandInfo<C: LevelContext> {
     name: String,
+    alias: Option<String>,
     desc: String,
     func: Caller<C>,
+    visible: bool,
 }
 
 #[macro_export]
@@ -175,13 +177,53 @@ impl<C: LevelContext> Level<C> {
         desc: &str,
         func: Caller<C>,
     ) -> Result<()> {
+        self.cmd_common(name, None, desc, func, true)
+    }
+
+    /**
+     * Add a handler for a next level sub-command with a short alias.  Otherwise
+     * identical to the `cmd()` method.
+     */
+    pub fn cmda(
+        &mut self,
+        name: &str,
+        alias: &str,
+        desc: &str,
+        func: Caller<C>,
+    ) -> Result<()> {
+        self.cmd_common(name, Some(alias), desc, func, true)
+    }
+
+    /**
+     * Add a handler for a next level sub-command that is not shown in the usage
+     * output.  Otherwise identical to the `cmd()` method.
+     */
+    pub fn hcmd(
+        &mut self,
+        name: &str,
+        desc: &str,
+        func: Caller<C>,
+    ) -> Result<()> {
+        self.cmd_common(name, None, desc, func, false)
+    }
+
+    fn cmd_common(
+        &mut self,
+        name: &str,
+        alias: Option<&str>,
+        desc: &str,
+        func: Caller<C>,
+        visible: bool,
+    ) -> Result<()> {
         if self.commands.iter().any(|ci| ci.name == name) {
             bail!("duplicate command \"{}\"", name);
         }
         self.commands.push(CommandInfo {
             name: name.to_string(),
+            alias: alias.map(|s| s.to_string()),
             desc: desc.to_string(),
             func,
+            visible,
         });
         Ok(())
     }
@@ -239,7 +281,7 @@ impl<C: LevelContext> Level<C> {
                     return Ok(None);
                 }
 
-                let table = if let Some(table) = self.table.as_mut() {
+                let table = if let Some(mut table) = self.table.take() {
                     table
                         .output_from_list(res.opt_str("o").as_deref())
                         .sort_from_list_asc(res.opt_str("s").as_deref())
@@ -258,7 +300,7 @@ impl<C: LevelContext> Level<C> {
                         std::process::exit(1);
                     }
 
-                    Some(table.build())
+                    Some(table)
                 } else {
                     None
                 };
@@ -298,15 +340,24 @@ impl<C: LevelContext> Level<C> {
 
         let usage = self.gen_usage();
 
+        let want = args.matches.free[0].as_str();
         for command in self.commands {
-            if command.name == args.matches.free[0] {
-                return Ok(Some(Selection {
-                    names: self.names,
-                    private: self.private,
-                    command,
-                    matches: args.matches,
-                }));
+            if command.name != want {
+                if let Some(alias) = &command.alias {
+                    if alias.as_str() != want {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
             }
+
+            return Ok(Some(Selection {
+                names: self.names,
+                private: self.private,
+                command,
+                matches: args.matches,
+            }));
         }
 
         print!("{}", usage);
@@ -329,7 +380,15 @@ impl<C: LevelContext> Level<C> {
         if !self.commands.is_empty() {
             out.push_str("\nCommands:\n");
             for cmd in self.commands.iter() {
-                out.push_str(&format!("    {:<19} {}\n", cmd.name, cmd.desc));
+                if !cmd.visible {
+                    continue;
+                }
+                let cn = if let Some(alias) = &cmd.alias {
+                    format!("{} ({})", cmd.name, alias)
+                } else {
+                    cmd.name.to_string()
+                };
+                out.push_str(&format!("    {:<19} {}\n", cn, cmd.desc));
             }
         }
         let mut out = self.options.usage(&out);
@@ -382,7 +441,7 @@ impl<C: LevelContext> Selection<C> {
 
 pub struct Arguments {
     matches: getopts::Matches,
-    table: Option<table::Table>,
+    table: Option<table::TableBuilder>,
 }
 
 impl Arguments {
@@ -394,7 +453,7 @@ impl Arguments {
         &self.matches.free
     }
 
-    pub fn table(&mut self) -> &mut table::Table {
-        self.table.as_mut().unwrap()
+    pub fn table(&self) -> table::Table {
+        self.table.as_ref().unwrap().build()
     }
 }
