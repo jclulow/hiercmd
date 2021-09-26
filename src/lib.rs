@@ -4,13 +4,28 @@ use std::pin::Pin;
 
 pub mod table;
 
-pub type Caller = fn(Level) -> Pin<Box<(dyn Future<Output = Result<()>>)>>;
+pub mod prelude {
+    pub use super::table::Row;
+    pub use super::{args, cmd, no_args, sel, Level};
+}
+
+/**
+ * Context object available to each command handler
+ *
+ * Automatically implemented for all Send + Sync types.
+ */
+pub trait LevelContext: Send + Sync + 'static {}
+
+impl<T: 'static> LevelContext for T where T: Send + Sync {}
+
+pub type Caller<C> =
+    fn(Level<C>) -> Pin<Box<(dyn Future<Output = Result<()>>)>>;
 
 #[derive(Clone)]
-pub struct CommandInfo {
-    pub name: String,
-    pub desc: String,
-    pub func: Caller,
+struct CommandInfo<C: LevelContext> {
+    name: String,
+    desc: String,
+    func: Caller<C>,
 }
 
 #[macro_export]
@@ -68,25 +83,30 @@ macro_rules! no_args {
     };
 }
 
-pub mod prelude {
-    pub use super::table::Row;
-    pub use super::{args, cmd, no_args, sel, Level};
-}
-
-pub struct Level {
+pub struct Level<C: LevelContext> {
     names: Vec<String>,
     args: Option<Vec<String>>,
-    commands: Vec<CommandInfo>,
+    commands: Vec<CommandInfo<C>>,
     options: getopts::Options,
     table: Option<table::TableBuilder>,
+    private: C,
 }
 
-impl Level {
-    pub fn new(name: &str) -> Level {
-        Level::new_sub(vec![name.to_string()], None)
+impl<C: LevelContext> Level<C> {
+    /**
+     * Create a new top-level command handling object.  The `name` is the
+     * project command name, and `private` is the consumer-provided context
+     * object to be passed to other level handlers.
+     */
+    pub fn new(name: &str, private: C) -> Level<C> {
+        Level::new_sub(vec![name.to_string()], private, None)
     }
 
-    fn new_sub(names: Vec<String>, args: Option<Vec<String>>) -> Level {
+    fn new_sub(
+        names: Vec<String>,
+        private: C,
+        args: Option<Vec<String>>,
+    ) -> Level<C> {
         let mut options = getopts::Options::new();
         options.parsing_style(getopts::ParsingStyle::StopAtFirstFree);
         options.optflag("", "help", "usage information");
@@ -97,13 +117,32 @@ impl Level {
             commands: Vec::new(),
             options,
             table: None,
+            private,
         }
     }
 
+    /**
+     * Access the consumer-provided context object which is passed to all level
+     * handlers.
+     */
+    pub fn context(&mut self) -> &mut C {
+        &mut self.private
+    }
+
+    /**
+     * Add a column to the table definition for this level.  The first time this
+     * is called for a level, table mode is activated.  Subsequent calls
+     * continue to add column definitions.
+     */
     pub fn add_column(&mut self, name: &str, width: usize, default: bool) {
         if self.table.is_none() {
             self.table = Some(table::TableBuilder::default());
 
+            /*
+             * Include the standard tabular data formatting options for this
+             * level.  They will be handled as part of printing the table after
+             * option parsing.
+             */
             let o = &mut self.options;
             o.optopt("s", "", "sort by column list (asc)", "COLUMNS");
             o.optopt("S", "", "sort by column list (desc)", "COLUMNS");
@@ -119,7 +158,19 @@ impl Level {
             .add_column(name, width, default);
     }
 
-    pub fn cmd(&mut self, name: &str, desc: &str, func: Caller) -> Result<()> {
+    /**
+     * Add a handler for a next level sub-command.  The `name` is what the user
+     * would pass on the command line to nominate the sub-command.  The `desc`
+     * is descriptive text that will show up in usage information.  The `func`
+     * callback is a function pointer for an asynchronous function wrapped by
+     * the `cmd!()` macro.
+     */
+    pub fn cmd(
+        &mut self,
+        name: &str,
+        desc: &str,
+        func: Caller<C>,
+    ) -> Result<()> {
         if self.commands.iter().any(|ci| ci.name == name) {
             bail!("duplicate command \"{}\"", name);
         }
@@ -164,6 +215,12 @@ impl Level {
         self.options.optopt(short_name, long_name, desc, hint);
     }
 
+    /**
+     * If this command level is a terminal node, just parse arguments and the
+     * optional table.  This should be called via the `args()!` macro, or if the
+     * command does not expect any arguments, the `no_args()!` macro.
+     * Automatically handles `--help` and any table output formatting options.
+     */
     pub fn parse(&mut self) -> Result<Option<Arguments>> {
         let res = if let Some(args) = &self.args {
             self.options.parse(args)
@@ -215,7 +272,16 @@ impl Level {
         }
     }
 
-    pub fn select(&mut self) -> Result<Option<Selection>> {
+    /**
+     * Parse options for this command level and select the next command.  The
+     * best way to call this routine is using the `sel!()` macro, which handles
+     * the early return and exit-on-failure conditions automatically.
+     */
+    pub fn select(mut self) -> Result<Option<Selection<C>>> {
+        if self.commands.is_empty() {
+            bail!("no commands provided by consumer");
+        }
+
         let args = args!(self);
 
         /*
@@ -226,21 +292,28 @@ impl Level {
             bail!("choose a command");
         }
 
-        for cmd in &self.commands {
-            if cmd.name == args.matches.free[0] {
+        let usage = self.gen_usage();
+
+        for command in self.commands {
+            if command.name == args.matches.free[0] {
                 return Ok(Some(Selection {
-                    names: self.names.clone(),
-                    command: cmd.clone(),
+                    names: self.names,
+                    private: self.private,
+                    command,
                     matches: args.matches,
                 }));
             }
         }
 
-        self.usage();
+        print!("{}", usage);
         bail!("command \"{}\" not understood", &args.matches.free[0]);
     }
 
-    pub fn usage(&self) {
+    fn usage(&self) {
+        print!("{}", self.gen_usage());
+    }
+
+    fn gen_usage(&self) -> String {
         let mut out = "Usage:".to_string();
         for n in self.names.iter() {
             out.push_str(&format!(" {}", n));
@@ -255,9 +328,9 @@ impl Level {
                 out.push_str(&format!("    {:<19} {}\n", cmd.name, cmd.desc));
             }
         }
-        println!("{}", self.options.usage(&out));
+        let mut out = self.options.usage(&out);
+        out.push('\n');
         if let Some(table) = &self.table {
-            let mut out = String::new();
             let cols = table.column_names();
             if !cols.is_empty() {
                 out.push_str("Columns:\n");
@@ -265,26 +338,32 @@ impl Level {
                     out.push_str(&format!("    {:<19}\n", col));
                 }
             }
-            println!("{}", out);
+            out.push('\n');
         }
+        out
     }
 }
 
-pub struct Selection {
+pub struct Selection<C: LevelContext> {
+    private: C,
     names: Vec<String>,
-    command: CommandInfo,
+    command: CommandInfo<C>,
     matches: getopts::Matches,
 }
 
-impl Selection {
+impl<C: LevelContext> Selection<C> {
     pub fn opts(&self) -> &getopts::Matches {
         &self.matches
     }
 
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let mut names = self.names.clone();
         names.push(self.command.name.clone());
-        let l = Level::new_sub(names, Some(self.matches.free[1..].to_vec()));
+        let l = Level::new_sub(
+            names,
+            self.private,
+            Some(self.matches.free[1..].to_vec()),
+        );
         (self.command.func)(l).await
     }
 }

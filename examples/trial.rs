@@ -1,8 +1,8 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use hiercmd::prelude::*;
 
-async fn do_thing_list(mut l: Level) -> Result<()> {
+async fn do_thing_list(mut l: Level<()>) -> Result<()> {
     l.add_column("name", 16, true);
     l.add_column("number", 6, false);
 
@@ -23,12 +23,12 @@ async fn do_thing_list(mut l: Level) -> Result<()> {
     Ok(())
 }
 
-async fn do_thing(mut l: Level) -> Result<()> {
+async fn do_thing(mut l: Level<()>) -> Result<()> {
     l.cmd("list", "list things", cmd!(do_thing_list))?;
     sel!(l).run().await
 }
 
-async fn do_info(mut l: Level) -> Result<()> {
+async fn do_info(mut l: Level<()>) -> Result<()> {
     let a = args!(l);
     for (i, arg) in a.args().iter().enumerate() {
         println!("[{:02}] {}", i, arg);
@@ -36,14 +36,14 @@ async fn do_info(mut l: Level) -> Result<()> {
     Ok(())
 }
 
-async fn do_nothing(mut l: Level) -> Result<()> {
+async fn do_nothing(mut l: Level<()>) -> Result<()> {
     no_args!(l);
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut l = hiercmd::Level::new("trial");
+    let mut l = hiercmd::Level::new("trial", ());
     l.cmd("info", "get information", cmd!(do_info))?;
     l.cmd("thing", "manage things", cmd!(do_thing))?;
     l.cmd("nothing", "do nothing", cmd!(do_nothing))?;
