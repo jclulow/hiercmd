@@ -125,8 +125,8 @@ impl<C: LevelContext> Level<C> {
      * Access the consumer-provided context object which is passed to all level
      * handlers.
      */
-    pub fn context(&mut self) -> &mut C {
-        &mut self.private
+    pub fn context(&self) -> &C {
+        &self.private
     }
 
     /**
