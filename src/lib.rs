@@ -129,6 +129,10 @@ impl<C: LevelContext> Level<C> {
         &self.private
     }
 
+    pub fn context_mut(&mut self) -> &mut C {
+        &mut self.private
+    }
+
     /**
      * Add a column to the table definition for this level.  The first time this
      * is called for a level, table mode is activated.  Subsequent calls
@@ -309,7 +313,7 @@ impl<C: LevelContext> Level<C> {
         bail!("command \"{}\" not understood", &args.matches.free[0]);
     }
 
-    fn usage(&self) {
+    pub fn usage(&self) {
         print!("{}", self.gen_usage());
     }
 
