@@ -370,6 +370,14 @@ impl<C: LevelContext> Selection<C> {
         );
         (self.command.func)(l).await
     }
+
+    pub fn context(&self) -> &C {
+        &self.private
+    }
+
+    pub fn context_mut(&mut self) -> &mut C {
+        &mut self.private
+    }
 }
 
 pub struct Arguments {
