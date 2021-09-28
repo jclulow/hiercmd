@@ -7,6 +7,7 @@ pub mod table;
 pub mod prelude {
     pub use super::table::Row;
     pub use super::{args, bad_args, cmd, no_args, sel, Level};
+    pub use slog::{info, warn, error, debug, trace, crit, o, Logger};
 }
 
 /**
@@ -204,6 +205,10 @@ impl<C: LevelContext> Level<C> {
 
     pub fn context_mut(&mut self) -> &mut C {
         &mut self.private
+    }
+
+    pub fn discard_logger(&self) -> slog::Logger {
+        slog::Logger::root(slog::Discard, slog::o!())
     }
 
     /**
