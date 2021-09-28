@@ -6,7 +6,7 @@ pub mod table;
 
 pub mod prelude {
     pub use super::table::Row;
-    pub use super::{args, cmd, no_args, sel, Level};
+    pub use super::{args, bad_args, cmd, no_args, sel, Level};
 }
 
 /**
@@ -30,6 +30,37 @@ struct CommandInfo<C: LevelContext> {
     visible: bool,
 }
 
+struct OptionPair {
+    short: String,
+    long: String,
+}
+
+impl std::fmt::Display for OptionPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.has_short() {
+            write!(f, "--{}", self.long)
+        } else if !self.has_long() {
+            write!(f, "-{}", self.short)
+        } else {
+            write!(f, "-{} (--{})", self.short, self.long)
+        }
+    }
+}
+
+impl OptionPair {
+    fn has_short(&self) -> bool {
+        !self.short.is_empty()
+    }
+
+    fn has_long(&self) -> bool {
+        !self.long.is_empty()
+    }
+}
+
+/**
+ * Wrap an async level handler function in the appropriate pinned box for
+ * registration with the `Level.cmd()` family of methods.
+ */
 #[macro_export]
 macro_rules! cmd {
     ($func:ident) => {
@@ -37,6 +68,12 @@ macro_rules! cmd {
     };
 }
 
+/**
+ * Perform argument parsing and use the first positional argument as the name of
+ * a sub-command.  Fails with usage information if the chosen command is not
+ * registered.  Returns a selection object that can be used to invoke the next
+ * level handler.
+ */
 #[macro_export]
 macro_rules! sel {
     ($level:ident) => {
@@ -51,6 +88,10 @@ macro_rules! sel {
     };
 }
 
+/**
+ * Perform argument parsing and allow for positional arguments, long and short
+ * options.
+ */
 #[macro_export]
 macro_rules! args {
     ($level:ident) => {
@@ -65,9 +106,15 @@ macro_rules! args {
     };
 }
 
+/**
+ * Perform argument parsing but fail and display usage help if there are any
+ * positional arguments.  Long and short options are still processed and
+ * returned, if any have been specified for this level.
+ */
 #[macro_export]
 macro_rules! no_args {
-    ($level:ident) => {
+    ($level:ident) => {{
+        $level.usage_args(None);
         match $level.parse() {
             Ok(None) => return Ok(Default::default()),
             Ok(Some(args)) => {
@@ -82,14 +129,34 @@ macro_rules! no_args {
                 std::process::exit(1);
             }
         }
+    }};
+}
+
+/**
+ * A macro like `bail!()` for reporting an issue with the provided arguments.
+ * Presents usage information on stderr and then exits the program.
+ */
+#[macro_export]
+macro_rules! bad_args {
+    ($level:ident, $msg:literal) => {
+        $level.usage_error($msg);
+        std::process::exit(1);
+    };
+    ($level:ident, $fmt:literal, $($arg:tt)*) => {
+        $level.usage_error(&format!($fmt, $($arg)*));
+        std::process::exit(1);
     };
 }
 
 pub struct Level<C: LevelContext> {
     names: Vec<String>,
+    usage_args: Option<String>,
+    usage_opts: bool,
     args: Option<Vec<String>>,
     commands: Vec<CommandInfo<C>>,
     options: getopts::Options,
+    options_required: Option<Vec<OptionPair>>,
+    options_mutex: Option<Vec<Vec<OptionPair>>>,
     table: Option<table::TableBuilder>,
     private: C,
 }
@@ -115,9 +182,13 @@ impl<C: LevelContext> Level<C> {
 
         Level {
             names,
+            usage_args: Some("[ARGS...]".to_string()),
+            usage_opts: false,
             args,
             commands: Vec::new(),
             options,
+            options_required: None,
+            options_mutex: None,
             table: None,
             private,
         }
@@ -156,6 +227,7 @@ impl<C: LevelContext> Level<C> {
             //opts.optflag("a", "", "all fields");
             o.optflag("H", "", "no header");
             o.optflag("p", "", "print numbers in parseable (exact) format");
+            self.usage_opts = true;
         }
 
         self.table
@@ -228,12 +300,21 @@ impl<C: LevelContext> Level<C> {
         Ok(())
     }
 
+    /**
+     * Provide a description of the arguments this level accepts for inclusion
+     * in the usage message.  By default, `"[ARGS...]"` is shown.
+     */
+    pub fn usage_args(&mut self, snippet: Option<&str>) {
+        self.usage_args = snippet.map(|s| s.to_string());
+    }
+
     pub fn optflagmulti(
         &mut self,
         short_name: &str,
         long_name: &str,
         desc: &str,
     ) {
+        self.usage_opts = true;
         self.options.optflagmulti(short_name, long_name, desc);
     }
 
@@ -244,10 +325,12 @@ impl<C: LevelContext> Level<C> {
         desc: &str,
         hint: &str,
     ) {
+        self.usage_opts = true;
         self.options.optmulti(short_name, long_name, desc, hint);
     }
 
     pub fn optflag(&mut self, short_name: &str, long_name: &str, desc: &str) {
+        self.usage_opts = true;
         self.options.optflag(short_name, long_name, desc);
     }
 
@@ -258,7 +341,41 @@ impl<C: LevelContext> Level<C> {
         desc: &str,
         hint: &str,
     ) {
+        self.usage_opts = true;
         self.options.optopt(short_name, long_name, desc, hint);
+    }
+
+    pub fn reqopt(
+        &mut self,
+        short_name: &str,
+        long_name: &str,
+        desc: &str,
+        hint: &str,
+    ) {
+        if self.options_required.is_none() {
+            self.options_required = Some(Vec::new());
+        }
+        self.options_required.as_mut().unwrap().push(OptionPair {
+            short: short_name.to_string(),
+            long: long_name.to_string(),
+        });
+        self.usage_opts = true;
+        self.options.optopt(short_name, long_name, desc, hint);
+    }
+
+    pub fn mutually_exclusive(&mut self, pairs: &[(&str, &str)]) {
+        if self.options_mutex.is_none() {
+            self.options_mutex = Some(Vec::new());
+        }
+        self.options_mutex.as_mut().unwrap().push(
+            pairs
+                .iter()
+                .map(|(short, long)| OptionPair {
+                    short: short.to_string(),
+                    long: long.to_string(),
+                })
+                .collect(),
+        );
     }
 
     /**
@@ -281,6 +398,53 @@ impl<C: LevelContext> Level<C> {
                     return Ok(None);
                 }
 
+                /*
+                 * Ensure all required options are present.
+                 */
+                if let Some(reqopts) = &self.options_required {
+                    let mut missing = Vec::new();
+                    for op in reqopts.iter() {
+                        let oksh = op.has_short() && res.opt_present(&op.short);
+                        let oklo = op.has_long() && res.opt_present(&op.long);
+
+                        if !oksh && !oklo {
+                            missing.push(op.to_string());
+                        }
+                    }
+
+                    if !missing.is_empty() {
+                        self.usage_error(&format!(
+                            "required options missing: {}",
+                            missing.join(", ")
+                        ));
+                        std::process::exit(1);
+                    }
+                }
+
+                /*
+                 * Ensure there are no conflicts between mutually exclusive
+                 * options.
+                 */
+                if let Some(mutopts) = &self.options_mutex {
+                    for opts in mutopts.iter() {
+                        let conflicts = opts
+                            .iter()
+                            .filter(|opt| {
+                                res.opt_present(&opt.short)
+                                    || res.opt_present(&opt.long)
+                            })
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>();
+                        if conflicts.len() > 1 {
+                            self.usage_error(&format!(
+                                "{} are mutually exclusive",
+                                conflicts.join(" and "),
+                            ));
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
                 let table = if let Some(mut table) = self.table.take() {
                     table
                         .output_from_list(res.opt_str("o").as_deref())
@@ -292,11 +456,10 @@ impl<C: LevelContext> Level<C> {
 
                     let mcn = table.missing_column_names();
                     if !mcn.is_empty() {
-                        self.usage();
-                        eprintln!(
-                            "ERROR: invalid column names: {}",
+                        self.usage_error(&format!(
+                            "invalid column names: {}",
                             mcn.join(", ")
-                        );
+                        ));
                         std::process::exit(1);
                     }
 
@@ -311,8 +474,7 @@ impl<C: LevelContext> Level<C> {
                 }))
             }
             Err(e) => {
-                self.usage();
-                eprintln!("ERROR: {}", e);
+                self.usage_error(&format!("{}", e));
                 std::process::exit(1);
             }
         }
@@ -334,8 +496,7 @@ impl<C: LevelContext> Level<C> {
          * Determine which command the user is trying to run.
          */
         if args.matches.free.is_empty() {
-            self.usage();
-            bail!("choose a command");
+            self.usage_error("choose a command");
         }
 
         let usage = self.gen_usage();
@@ -368,15 +529,39 @@ impl<C: LevelContext> Level<C> {
         print!("{}", self.gen_usage());
     }
 
+    pub fn usage_error(&self, msg: &str) {
+        eprint!("{}", self.gen_usage());
+        eprintln!("ERROR: {}", msg);
+    }
+
     fn gen_usage(&self) -> String {
         let mut out = "Usage:".to_string();
+        /*
+         * The usage synopsis starts with the first level (the command name) and
+         * then includes each level down to the present level:
+         */
         for n in self.names.iter() {
             out.push_str(&format!(" {}", n));
         }
+        if self.usage_opts {
+            /*
+             * If this level specifies any options, mention that in the usage
+             * synposis.
+             */
+            out.push_str(" [OPTS]");
+        }
         if !self.commands.is_empty() {
+            /*
+             * If this is level is not terminal (i.e., it has further
+             * sub-levels) then include that in the synopsis:
+             */
             out.push_str(" COMMAND");
         }
-        out.push_str(" [OPTS] [ARGS...]\n");
+        //out.push_str(" [OPTS]");
+        if let Some(usage_args) = &self.usage_args {
+            out.push_str(&format!(" {}", usage_args));
+        }
+        out.push_str("\n");
         if !self.commands.is_empty() {
             out.push_str("\nCommands:\n");
             for cmd in self.commands.iter() {
