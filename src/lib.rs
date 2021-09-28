@@ -413,11 +413,11 @@ impl<C: LevelContext> Level<C> {
                     }
 
                     if !missing.is_empty() {
-                        self.usage_error(&format!(
+                        bad_args!(
+                            self,
                             "required options missing: {}",
                             missing.join(", ")
-                        ));
-                        std::process::exit(1);
+                        );
                     }
                 }
 
@@ -436,11 +436,11 @@ impl<C: LevelContext> Level<C> {
                             .map(|s| s.to_string())
                             .collect::<Vec<_>>();
                         if conflicts.len() > 1 {
-                            self.usage_error(&format!(
+                            bad_args!(
+                                self,
                                 "{} are mutually exclusive",
                                 conflicts.join(" and "),
-                            ));
-                            std::process::exit(1);
+                            );
                         }
                     }
                 }
@@ -456,11 +456,11 @@ impl<C: LevelContext> Level<C> {
 
                     let mcn = table.missing_column_names();
                     if !mcn.is_empty() {
-                        self.usage_error(&format!(
+                        bad_args!(
+                            self,
                             "invalid column names: {}",
                             mcn.join(", ")
-                        ));
-                        std::process::exit(1);
+                        );
                     }
 
                     Some(table)
@@ -474,8 +474,7 @@ impl<C: LevelContext> Level<C> {
                 }))
             }
             Err(e) => {
-                self.usage_error(&format!("{}", e));
-                std::process::exit(1);
+                bad_args!(self, "{}", e);
             }
         }
     }
@@ -496,7 +495,7 @@ impl<C: LevelContext> Level<C> {
          * Determine which command the user is trying to run.
          */
         if args.matches.free.is_empty() {
-            self.usage_error("choose a command");
+            bad_args!(self, "choose a command");
         }
 
         let usage = self.gen_usage();
