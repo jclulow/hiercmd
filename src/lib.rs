@@ -7,7 +7,7 @@ pub mod table;
 pub mod prelude {
     pub use super::table::Row;
     pub use super::{args, bad_args, cmd, no_args, sel, Level};
-    pub use slog::{info, warn, error, debug, trace, crit, o, Logger};
+    pub use slog::{crit, debug, error, info, o, trace, warn, Logger};
 }
 
 /**

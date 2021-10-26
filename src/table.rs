@@ -3,11 +3,13 @@
 use anyhow::Result;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::time::Duration;
 
 enum Value {
     S(String),
     U(u64),
     B(u64),
+    Age(Duration),
 }
 
 #[derive(Clone)]
@@ -50,6 +52,15 @@ impl Row {
         let name = name.as_ref().to_string();
 
         self.data.insert(name, Value::B(value));
+    }
+
+    pub fn add_age<S1>(&mut self, name: S1, value: Duration)
+    where
+        S1: AsRef<str>,
+    {
+        let name = name.as_ref().to_string();
+
+        self.data.insert(name, Value::Age(value));
     }
 }
 
@@ -97,6 +108,13 @@ impl Table {
                             }
                         }
                         (Value::B(a), Value::B(b)) => {
+                            if so.ascending {
+                                a.cmp(b)
+                            } else {
+                                b.cmp(a)
+                            }
+                        }
+                        (Value::Age(a), Value::Age(b)) => {
                             if so.ascending {
                                 a.cmp(b)
                             } else {
@@ -176,6 +194,41 @@ impl Table {
                             format!("{:.02}K", kb)
                         } else {
                             format!("{}", b)
+                        }
+                    }
+                    Value::Age(d) => {
+                        if self.parseable {
+                            /*
+                             * Just emit a whole number of seconds for parseable
+                             * output.
+                             */
+                            d.as_secs().to_string()
+                        } else if d.as_secs() >= 86400 {
+                            /*
+                             * Days and hours.
+                             */
+                            let days = d.as_secs() / 86400;
+                            let hours = (d.as_secs() - 86400 * days) / 3600;
+                            format!("{:2}d{:02}h", days, hours)
+                        } else if d.as_secs() >= 3600 {
+                            /*
+                             * Hours and minutes.
+                             */
+                            let hours = d.as_secs() / 3600;
+                            let mins = (d.as_secs() - 3600 * hours) / 60;
+                            format!("{:2}h{:02}m", hours, mins)
+                        } else if d.as_secs() >= 60 {
+                            /*
+                             * Minutes and seconds.
+                             */
+                            let mins = d.as_secs() / 60;
+                            let secs = d.as_secs() - 60 * mins;
+                            format!("{:2}m{:02}s", mins, secs)
+                        } else {
+                            /*
+                             * Seconds.
+                             */
+                            format!("{}s", d.as_secs())
                         }
                     }
                 };
@@ -382,6 +435,7 @@ impl TableBuilder {
 #[cfg(test)]
 mod tests {
     use super::{Row, Table, TableBuilder};
+    use std::time::Duration;
 
     fn longer_row(id: u64, name: &str, colour: &str, rating: u64) -> Row {
         let mut row = Row::default();
@@ -423,6 +477,20 @@ mod tests {
         table.add_row(basic_row(5, "almond"));
         table.add_row(basic_row(1, "almond"));
         table.add_row(basic_row(2, "carrot"));
+    }
+
+    fn aged_row(id: u64, age: Duration) -> Row {
+        let mut row = Row::default();
+        row.add_u64("id", id);
+        row.add_age("age", age);
+        row
+    }
+
+    fn aged_data(table: &mut Table) {
+        table.add_row(aged_row(1, Duration::from_secs(86401)));
+        table.add_row(aged_row(2, Duration::from_secs(47)));
+        table.add_row(aged_row(3, Duration::from_secs(3 * 86400 + 7 * 3600)));
+        table.add_row(aged_row(4, Duration::from_secs(13 * 3600 + 23 * 60)));
     }
 
     #[test]
@@ -615,6 +683,28 @@ mod tests {
             5        chocolate        brown\n\
             6        lemon            yellow\n\
             8        strawberry       pink\n\
+            "
+        );
+    }
+
+    #[test]
+    fn some_ages() {
+        let mut t = TableBuilder::default()
+            .show_header(true)
+            .add_column("id", 8, true)
+            .add_column("age", 8, true)
+            .sort_from_list_desc(Some("age"))
+            .build();
+
+        aged_data(&mut t);
+
+        assert_eq!(
+            t.output().expect("output"),
+            "ID       AGE\n\
+            3         3d07h\n\
+            1         1d00h\n\
+            4        13h23m\n\
+            2        47s\n\
             "
         );
     }
