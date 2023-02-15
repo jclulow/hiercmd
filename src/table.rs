@@ -366,6 +366,19 @@ impl TableBuilder {
         self
     }
 
+    pub fn set_column_default(
+        &mut self,
+        name: &str,
+        def: bool,
+    ) -> &mut TableBuilder {
+        for col in self.outputs.iter_mut() {
+            if col.name == name {
+                col.default = def;
+            }
+        }
+        self
+    }
+
     /**
      * Decide whether to render a header at the top of the table or not.
      */

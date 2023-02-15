@@ -642,6 +642,10 @@ impl Arguments {
         &self.matches.free
     }
 
+    pub fn set_column_default(&mut self, name: &str, def: bool) {
+        self.table.as_mut().unwrap().set_column_default(name, def);
+    }
+
     pub fn table(&self) -> table::Table {
         self.table.as_ref().unwrap().build()
     }
