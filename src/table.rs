@@ -197,32 +197,53 @@ impl Table {
                         }
                     }
                     Value::Age(d) => {
+                        const MINUTE: u64 = 60;
+                        const HOUR: u64 = 60 * MINUTE;
+                        const DAY: u64 = 24 * HOUR;
+                        const YEAR: u64 = 365 * DAY;
+                        const MONTH: u64 = 30 * DAY;
+
                         if self.parseable {
                             /*
                              * Just emit a whole number of seconds for parseable
                              * output.
                              */
                             d.as_secs().to_string()
-                        } else if d.as_secs() >= 86400 {
+                        } else if d.as_secs() >= YEAR {
+                            /*
+                             * Years and months.
+                             */
+                            let years = d.as_secs() / YEAR;
+                            let months = (d.as_secs() - YEAR * years) / MONTH;
+                            format!("{:2}y{:02}M", years, months)
+                        } else if d.as_secs() >= 99 * DAY {
+                            /*
+                             * Months and days.  Note that we're using 30 days
+                             * to represent a month here.
+                             */
+                            let months = d.as_secs() / MONTH;
+                            let days = (d.as_secs() - MONTH * months) / DAY;
+                            format!("{:2}M{:02}d", months, days)
+                        } else if d.as_secs() >= DAY {
                             /*
                              * Days and hours.
                              */
-                            let days = d.as_secs() / 86400;
-                            let hours = (d.as_secs() - 86400 * days) / 3600;
+                            let days = d.as_secs() / DAY;
+                            let hours = (d.as_secs() - DAY * days) / HOUR;
                             format!("{:2}d{:02}h", days, hours)
-                        } else if d.as_secs() >= 3600 {
+                        } else if d.as_secs() >= HOUR {
                             /*
                              * Hours and minutes.
                              */
-                            let hours = d.as_secs() / 3600;
-                            let mins = (d.as_secs() - 3600 * hours) / 60;
+                            let hours = d.as_secs() / HOUR;
+                            let mins = (d.as_secs() - HOUR * hours) / MINUTE;
                             format!("{:2}h{:02}m", hours, mins)
-                        } else if d.as_secs() >= 60 {
+                        } else if d.as_secs() >= MINUTE {
                             /*
                              * Minutes and seconds.
                              */
-                            let mins = d.as_secs() / 60;
-                            let secs = d.as_secs() - 60 * mins;
+                            let mins = d.as_secs() / MINUTE;
+                            let secs = d.as_secs() - MINUTE * mins;
                             format!("{:2}m{:02}s", mins, secs)
                         } else {
                             /*
