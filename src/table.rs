@@ -80,10 +80,56 @@ impl Table {
         self.data.push(row);
     }
 
+    fn filter(&self) -> Vec<&Column> {
+        if let Some(filter) = &self.output_filter {
+            filter
+                .iter()
+                .map(|n| self.outputs.iter().find(|c| &c.name == n).unwrap())
+                .collect()
+        } else {
+            self.outputs.iter().filter(|c| c.default).collect()
+        }
+    }
+
+    pub fn output_unsorted_header(&self) -> Result<String> {
+        let f = self.filter();
+        self.output_unsorted_header_common(&f)
+    }
+
+    fn output_unsorted_header_common(
+        &self,
+        filter: &[&Column],
+    ) -> Result<String> {
+        Ok(if self.header {
+            let mut line = String::new();
+
+            for (i, col) in filter.iter().enumerate() {
+                if self.tabsep {
+                    if i > 0 {
+                        line += "\t";
+                    }
+                    line += &col.name.to_uppercase();
+                } else {
+                    line += &format!(
+                        "{:width$} ",
+                        col.name.to_uppercase(),
+                        width = col.width
+                    );
+                }
+            }
+
+            if self.tabsep {
+                format!("{line}\n")
+            } else {
+                format!("{}\n", line.trim_end())
+            }
+        } else {
+            "".to_string()
+        })
+    }
+
     pub fn output(&mut self) -> Result<String> {
         if let Some(order) = &self.sort_order {
-            let order = order.clone();
-
             self.data.sort_by(|a, b| {
                 /*
                  * Try each of the columns in the provided sort order:
@@ -134,145 +180,128 @@ impl Table {
             });
         }
 
-        let filter: Vec<Column> = if let Some(filter) = &self.output_filter {
-            filter
-                .iter()
-                .map(|n| {
-                    self.outputs.iter().find(|c| &c.name == n).unwrap().clone()
-                })
-                .collect()
-        } else {
-            self.outputs.iter().filter(|c| c.default).cloned().collect()
-        };
+        let filter = self.filter();
 
-        let mut out = String::new();
-
-        if self.header {
-            let mut line = String::new();
-
-            for (i, col) in filter.iter().enumerate() {
-                if self.tabsep {
-                    if i > 0 {
-                        line += "\t";
-                    }
-                    line += &col.name.to_uppercase();
-                } else {
-                    line += &format!(
-                        "{:width$} ",
-                        col.name.to_uppercase(),
-                        width = col.width
-                    );
-                }
-            }
-
-            if self.tabsep {
-                out += &line;
-            } else {
-                out += line.trim_end();
-            }
-            out += "\n";
-        }
+        let mut out = self.output_unsorted_header_common(&filter)?;
 
         for row in self.data.iter() {
-            let mut line = String::new();
-
-            for (i, col) in filter.iter().enumerate() {
-                let val = row.data.get(&col.name).expect("output value");
-
-                let data = match val {
-                    Value::S(s) => s.to_string(),
-                    Value::U(n) => format!("{}", n),
-                    Value::B(b) => {
-                        if !self.parseable && *b > 1024 * 1024 * 1024 {
-                            let gb = (*b as f64) / 1024.0 / 1024.0 / 1024.0;
-                            format!("{:.02}G", gb)
-                        } else if !self.parseable && *b > 1024 * 1024 {
-                            let mb = (*b as f64) / 1024. / 1024.0;
-                            format!("{:.02}M", mb)
-                        } else if !self.parseable && *b > 1024 {
-                            let kb = (*b as f64) / 1024.0;
-                            format!("{:.02}K", kb)
-                        } else {
-                            format!("{}", b)
-                        }
-                    }
-                    Value::Age(d) => {
-                        const MINUTE: u64 = 60;
-                        const HOUR: u64 = 60 * MINUTE;
-                        const DAY: u64 = 24 * HOUR;
-                        const YEAR: u64 = 365 * DAY;
-                        const MONTH: u64 = 30 * DAY;
-
-                        if self.parseable {
-                            /*
-                             * Just emit a whole number of seconds for parseable
-                             * output.
-                             */
-                            d.as_secs().to_string()
-                        } else if d.as_secs() >= YEAR {
-                            /*
-                             * Years and months.
-                             */
-                            let years = d.as_secs() / YEAR;
-                            let months = (d.as_secs() - YEAR * years) / MONTH;
-                            format!("{:2}y{:02}M", years, months)
-                        } else if d.as_secs() >= 99 * DAY {
-                            /*
-                             * Months and days.  Note that we're using 30 days
-                             * to represent a month here.
-                             */
-                            let months = d.as_secs() / MONTH;
-                            let days = (d.as_secs() - MONTH * months) / DAY;
-                            format!("{:2}M{:02}d", months, days)
-                        } else if d.as_secs() >= DAY {
-                            /*
-                             * Days and hours.
-                             */
-                            let days = d.as_secs() / DAY;
-                            let hours = (d.as_secs() - DAY * days) / HOUR;
-                            format!("{:2}d{:02}h", days, hours)
-                        } else if d.as_secs() >= HOUR {
-                            /*
-                             * Hours and minutes.
-                             */
-                            let hours = d.as_secs() / HOUR;
-                            let mins = (d.as_secs() - HOUR * hours) / MINUTE;
-                            format!("{:2}h{:02}m", hours, mins)
-                        } else if d.as_secs() >= MINUTE {
-                            /*
-                             * Minutes and seconds.
-                             */
-                            let mins = d.as_secs() / MINUTE;
-                            let secs = d.as_secs() - MINUTE * mins;
-                            format!("{:2}m{:02}s", mins, secs)
-                        } else {
-                            /*
-                             * Seconds.
-                             */
-                            format!("{}s", d.as_secs())
-                        }
-                    }
-                };
-
-                if self.tabsep {
-                    if i > 0 {
-                        line += "\t";
-                    }
-                    line += &data.replace('\t', " ");
-                } else {
-                    line += &format!("{:width$} ", data, width = col.width);
-                }
-            }
-
-            if self.tabsep {
-                out += &line;
-            } else {
-                out += line.trim_end();
-            }
-            out += "\n";
+            out += &self.output_unsorted_common(&row, &filter)?;
         }
 
         Ok(out)
+    }
+
+    fn output_unsorted_common(
+        &self,
+        row: &Row,
+        filter: &[&Column],
+    ) -> Result<String> {
+        let mut line = String::new();
+
+        for (i, col) in filter.iter().enumerate() {
+            let val = row.data.get(&col.name).expect("output value");
+
+            let data = match val {
+                Value::S(s) => s.to_string(),
+                Value::U(n) => format!("{}", n),
+                Value::B(b) => {
+                    if !self.parseable && *b > 1024 * 1024 * 1024 {
+                        let gb = (*b as f64) / 1024.0 / 1024.0 / 1024.0;
+                        format!("{:.02}G", gb)
+                    } else if !self.parseable && *b > 1024 * 1024 {
+                        let mb = (*b as f64) / 1024. / 1024.0;
+                        format!("{:.02}M", mb)
+                    } else if !self.parseable && *b > 1024 {
+                        let kb = (*b as f64) / 1024.0;
+                        format!("{:.02}K", kb)
+                    } else {
+                        format!("{}", b)
+                    }
+                }
+                Value::Age(d) => {
+                    const MINUTE: u64 = 60;
+                    const HOUR: u64 = 60 * MINUTE;
+                    const DAY: u64 = 24 * HOUR;
+                    const YEAR: u64 = 365 * DAY;
+                    const MONTH: u64 = 30 * DAY;
+
+                    if self.parseable {
+                        /*
+                         * Just emit a whole number of seconds for parseable
+                         * output.
+                         */
+                        d.as_secs().to_string()
+                    } else if d.as_secs() >= YEAR {
+                        /*
+                         * Years and months.
+                         */
+                        let years = d.as_secs() / YEAR;
+                        let months = (d.as_secs() - YEAR * years) / MONTH;
+                        format!("{:2}y{:02}M", years, months)
+                    } else if d.as_secs() >= 99 * DAY {
+                        /*
+                         * Months and days.  Note that we're using 30 days
+                         * to represent a month here.
+                         */
+                        let months = d.as_secs() / MONTH;
+                        let days = (d.as_secs() - MONTH * months) / DAY;
+                        format!("{:2}M{:02}d", months, days)
+                    } else if d.as_secs() >= DAY {
+                        /*
+                         * Days and hours.
+                         */
+                        let days = d.as_secs() / DAY;
+                        let hours = (d.as_secs() - DAY * days) / HOUR;
+                        format!("{:2}d{:02}h", days, hours)
+                    } else if d.as_secs() >= HOUR {
+                        /*
+                         * Hours and minutes.
+                         */
+                        let hours = d.as_secs() / HOUR;
+                        let mins = (d.as_secs() - HOUR * hours) / MINUTE;
+                        format!("{:2}h{:02}m", hours, mins)
+                    } else if d.as_secs() >= MINUTE {
+                        /*
+                         * Minutes and seconds.
+                         */
+                        let mins = d.as_secs() / MINUTE;
+                        let secs = d.as_secs() - MINUTE * mins;
+                        format!("{:2}m{:02}s", mins, secs)
+                    } else {
+                        /*
+                         * Seconds.
+                         */
+                        format!("{}s", d.as_secs())
+                    }
+                }
+            };
+
+            if self.tabsep {
+                if i > 0 {
+                    line += "\t";
+                }
+                line += &data.replace('\t', " ");
+            } else {
+                line += &format!("{:width$} ", data, width = col.width);
+            }
+        }
+
+        Ok(if self.tabsep {
+            format!("{line}\n")
+        } else {
+            format!("{}\n", line.trim_end())
+        })
+    }
+
+    /**
+     * If you want output table rows one at a time, without the inbuilt sorting
+     * functionality, pass the row directly to output_unsorted() instead of
+     * add_row().  This allows a large result set to be streamed out of a
+     * program in some pre-sorted order.
+     */
+    pub fn output_unsorted(&self, row: Row) -> Result<String> {
+        let f = self.filter();
+        self.output_unsorted_common(&row, &f)
     }
 }
 
