@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -80,19 +80,32 @@ impl Table {
         self.data.push(row);
     }
 
-    fn filter(&self) -> Vec<&Column> {
-        if let Some(filter) = &self.output_filter {
+    fn filter(&self) -> Result<Vec<&Column>> {
+        Ok(if let Some(filter) = &self.output_filter {
+            /*
+             * Confirm that there are no missing column names:
+             */
+            let mut missing = filter
+                .iter()
+                .filter(|n| !self.outputs.iter().any(|o| &o.name == *n))
+                .cloned()
+                .collect::<Vec<_>>();
+            missing.sort();
+            if !missing.is_empty() {
+                bail!("invalid column names: {}", missing.join(", "));
+            }
+
             filter
                 .iter()
                 .map(|n| self.outputs.iter().find(|c| &c.name == n).unwrap())
                 .collect()
         } else {
             self.outputs.iter().filter(|c| c.default).collect()
-        }
+        })
     }
 
     pub fn output_unsorted_header(&self) -> Result<String> {
-        let f = self.filter();
+        let f = self.filter()?;
         self.output_unsorted_header_common(&f)
     }
 
@@ -180,7 +193,7 @@ impl Table {
             });
         }
 
-        let filter = self.filter();
+        let filter = self.filter()?;
 
         let mut out = self.output_unsorted_header_common(&filter)?;
 
@@ -300,7 +313,7 @@ impl Table {
      * program in some pre-sorted order.
      */
     pub fn output_unsorted(&self, row: Row) -> Result<String> {
-        let f = self.filter();
+        let f = self.filter()?;
         self.output_unsorted_common(&row, &f)
     }
 }
@@ -315,6 +328,7 @@ pub struct TableBuilder {
     header: bool,
     tabsep: bool,
     parseable: bool,
+    lazy_columns: bool,
     outputs: Vec<Column>,
     output_filter: Option<Vec<String>>,
     sort_order: Option<Vec<SortOrder>>,
@@ -329,6 +343,7 @@ impl Default for TableBuilder {
             outputs: Vec::new(),
             output_filter: None,
             sort_order: None,
+            lazy_columns: false,
         }
     }
 }
@@ -429,6 +444,11 @@ impl TableBuilder {
         self
     }
 
+    pub fn lazy_columns(&mut self, lazy: bool) -> *mut TableBuilder {
+        self.lazy_columns = lazy;
+        self
+    }
+
     /**
      * Decide whether to render a header at the top of the table or not.
      */
@@ -465,16 +485,20 @@ impl TableBuilder {
     }
 
     pub fn missing_column_names(&self) -> Vec<String> {
-        if let Some(output_filter) = &self.output_filter {
-            let mut names = output_filter
-                .iter()
-                .filter(|n| !self.outputs.iter().any(|o| &o.name == *n))
-                .cloned()
-                .collect::<Vec<_>>();
-            names.sort();
-            names
-        } else {
+        if self.lazy_columns {
             Vec::new()
+        } else {
+            if let Some(output_filter) = &self.output_filter {
+                let mut names = output_filter
+                    .iter()
+                    .filter(|n| !self.outputs.iter().any(|o| &o.name == *n))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                names.sort();
+                names
+            } else {
+                Vec::new()
+            }
         }
     }
 

@@ -159,6 +159,7 @@ pub struct Level<C: LevelContext> {
     options_required: Option<Vec<OptionPair>>,
     options_mutex: Option<Vec<Vec<OptionPair>>>,
     table: Option<table::TableBuilder>,
+    lazy_columns: bool,
     private: C,
 }
 
@@ -191,6 +192,7 @@ impl<C: LevelContext> Level<C> {
             options_required: None,
             options_mutex: None,
             table: None,
+            lazy_columns: false,
             private,
         }
     }
@@ -217,6 +219,21 @@ impl<C: LevelContext> Level<C> {
      * continue to add column definitions.
      */
     pub fn add_column(&mut self, name: &str, width: usize, default: bool) {
+        self.ensure_table().add_column(name, width, default);
+    }
+
+    /**
+     * Normally we check column validity during option parsing.  If lazy
+     * validation is enabled, we won't validate the columns until producing
+     * table output.  This allows for tables that include a dynamic set of
+     * properties; e.g., when listing objects that each have their own
+     * dictionary of properties.
+     */
+    pub fn lazy_column_validation(&mut self, lazy: bool) {
+        self.ensure_table().lazy_columns(lazy);
+    }
+
+    fn ensure_table(&mut self) -> &mut table::TableBuilder {
         if self.table.is_none() {
             self.table = Some(table::TableBuilder::default());
 
@@ -235,10 +252,7 @@ impl<C: LevelContext> Level<C> {
             self.usage_opts = true;
         }
 
-        self.table
-            .as_mut()
-            .unwrap()
-            .add_column(name, width, default);
+        self.table.as_mut().unwrap()
     }
 
     /**
@@ -459,13 +473,15 @@ impl<C: LevelContext> Level<C> {
                         .tab_separated(res.opt_present("H"))
                         .parseable(res.opt_present("p"));
 
-                    let mcn = table.missing_column_names();
-                    if !mcn.is_empty() {
-                        bad_args!(
-                            self,
-                            "invalid column names: {}",
-                            mcn.join(", ")
-                        );
+                    if !self.lazy_columns {
+                        let mcn = table.missing_column_names();
+                        if !mcn.is_empty() {
+                            bad_args!(
+                                self,
+                                "invalid column names: {}",
+                                mcn.join(", ")
+                            );
+                        }
                     }
 
                     Some(table)
@@ -640,6 +656,10 @@ impl Arguments {
 
     pub fn args(&self) -> &[String] {
         &self.matches.free
+    }
+
+    pub fn add_column(&mut self, name: &str, width: usize, def: bool) {
+        self.table.as_mut().unwrap().add_column(name, width, def);
     }
 
     pub fn set_column_default(&mut self, name: &str, def: bool) {
