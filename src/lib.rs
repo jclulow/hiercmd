@@ -393,7 +393,7 @@ impl<C: LevelContext> Level<C> {
         let res = if let Some(args) = &self.args {
             self.options.parse(args)
         } else {
-            self.options.parse(std::env::args().skip(1))
+            self.options.parse(std::env::args_os().skip(1))
         };
 
         match res {
