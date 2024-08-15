@@ -449,8 +449,10 @@ impl<C: LevelContext> Level<C> {
                         let conflicts = opts
                             .iter()
                             .filter(|opt| {
-                                res.opt_present(&opt.short)
-                                    || res.opt_present(&opt.long)
+                                (!opt.short.is_empty()
+                                    && res.opt_present(&opt.short))
+                                    || (!opt.long.is_empty()
+                                        && res.opt_present(&opt.long))
                             })
                             .map(|s| s.to_string())
                             .collect::<Vec<_>>();
