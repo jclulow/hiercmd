@@ -282,9 +282,10 @@ impl Table {
                         format!("{:2}m{:02}s", mins, secs)
                     } else {
                         /*
-                         * Seconds.
+                         * Seconds.  Pad out to six wide so that things mostly
+                         * line up.
                          */
-                        format!("{}s", d.as_secs())
+                        format!("   {:2}s", d.as_secs())
                     }
                 }
             };
@@ -791,7 +792,7 @@ mod tests {
             3         3d07h\n\
             1         1d00h\n\
             4        13h23m\n\
-            2        47s\n\
+            2           47s\n\
             "
         );
     }
